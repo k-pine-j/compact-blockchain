@@ -50,6 +50,8 @@ class Node:
             time.sleep(15)  # 15秒ごとにチェーンの長さを確認して同期
             self.request_longest_chain()
 
+    import pickle
+
     def request_longest_chain(self):
         # 他のノードにリクエストして最長チェーンを取得し同期
         longest_chain = []
@@ -60,13 +62,27 @@ class Node:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((peer_host, peer_port))
                     s.sendall(pickle.dumps("REQUEST_CHAIN"))
-                    data = s.recv(4096)
-                    peer_chain = pickle.loads(data)
 
-                    if len(peer_chain) > max_length:
-                        longest_chain = peer_chain
-                        max_length = len(peer_chain)
-                        print(f"Node {self.node_id} found a suitable chain from {peer_host}:{peer_port}")
+                    # データを分割して受信
+                    data = b""
+                    while True:
+                        packet = s.recv(4096)
+                        if not packet:
+                            break
+                        data += packet
+
+                    # 受信したデータをデコード
+                    if data:
+                        try:
+                            peer_chain = pickle.loads(data)
+                        except pickle.UnpicklingError:
+                            print(f"Node {self.node_id} received truncated or invalid pickle data from {peer_host}:{peer_port}")
+                            continue
+
+                        if len(peer_chain) > max_length:
+                            longest_chain = peer_chain
+                            max_length = len(peer_chain)
+                            print(f"Node {self.node_id} found a suitable chain from {peer_host}:{peer_port}")
             except ConnectionRefusedError:
                 print(f"Node {self.node_id} could not connect to {peer_host}:{peer_port}")
 
