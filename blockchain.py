@@ -23,11 +23,12 @@ class Block:
                 f"Transactions: {self.transactions}, Nonce: {self.nonce})")
 
 class Blockchain:
-    def __init__(self, chain, node_id, difficulty=5, target_block_time=10):
+    def __init__(self, chain, node_id, difficulty=5, target_block_time=10, is_invalid_node=False):
         self.chain = chain
         self.node_id = node_id
         self.difficulty = difficulty
         self.target_block_time = target_block_time
+        self.is_invalid_node = is_invalid_node
 
     def add_genesis_block(self):
         genesis_block = Block(0, "0", [])
@@ -62,17 +63,25 @@ class Blockchain:
     def proof_of_work(self, block):
         target = self.calculate_target()
         block.nonce = 0
+        delay = 0.1 if self.is_invalid_node else 0  # 不正ノードの場合に0.1秒の遅延
         while True:
             computed_hash = block.compute_hash()
             if int(computed_hash, 16) < target:
                 return computed_hash
             block.nonce += 1
 
+            # 遅延を適用（不正ノードの場合のみ）
+            time.sleep(delay)
+
     def is_valid_block(self, block, previous_block):
         target = self.calculate_target()
-        return (block.previous_hash == previous_block.hash 
-                and int(block.hash, 16) < target
-                and block.hash == block.compute_hash())
+        # インデックス、ハッシュ、ターゲットの順序を厳密に確認
+        return (
+            block.index == previous_block.index + 1 and  # インデックスが正しい順序か確認
+            block.previous_hash == previous_block.hash and  # 前のブロックのハッシュと一致しているか
+            int(block.hash, 16) < target and  # ターゲット以下のハッシュか
+            block.hash == block.compute_hash()  # ハッシュが正しいか
+        )
 
     def adjust_difficulty(self):
         if len(self.chain) > 1:
