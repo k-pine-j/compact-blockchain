@@ -8,16 +8,17 @@ from blockchain import Blockchain
 from external_transactions import generate_transaction
 
 class Node:
-    def __init__(self, node_id, host, port, peers, block_limit=100):
+    def __init__(self, node_id, host, port, peers, block_limit=100, is_invalid_node=False):
         self.node_id = node_id
-        self.blockchain = Blockchain(node_id=node_id, chain=[])
+        self.is_invalid_node = is_invalid_node # 不正なノードを確認するパラメータ
+        self.blockchain = Blockchain(node_id=node_id, chain=[], is_invalid_node=self.is_invalid_node)
         self.host = host
         self.port = port
         self.peers = peers
         self.block_limit = block_limit
         self.generated_blocks = 0
         self.stop_mining = False
-        self.mining_delay = random.uniform(5, 10)  # ブロック生成間隔を長めに設定
+        self.mining_delay = random.uniform(1, 5)  # ブロック生成間隔を長めに設定
         self.initial_sync = True
 
     def start(self):
@@ -27,10 +28,10 @@ class Node:
         # Node 1のみがジェネシスブロックを生成
         if self.node_id == 1:
             if len(self.blockchain.chain) == 0:
-                genesis_block = self.blockchain.add_genesis_block()
+                self.blockchain.add_genesis_block()
                 print(f"Node {self.node_id} generated the Genesis Block")
         else:
-            # Node 2, 3が起動時に最長チェーンをリクエストして同期
+            # Node 2, 3, 4が起動時に最長チェーンをリクエストして同期
             self.request_longest_chain()
 
         # 定期的なチェーン同期を開始
@@ -47,13 +48,12 @@ class Node:
 
     def periodic_sync(self):
         while True:
-            time.sleep(15)  # 15秒ごとにチェーンの長さを確認して同期
+            time.sleep(30)  # 30秒ごとにチェーンの長さを確認して同期
             self.request_longest_chain()
+            self.blockchain.export_chain_to_csv()
 
-    import pickle
 
     def request_longest_chain(self):
-        # 他のノードにリクエストして最長チェーンを取得し同期
         longest_chain = []
         max_length = len(self.blockchain.chain)
 
@@ -63,7 +63,6 @@ class Node:
                     s.connect((peer_host, peer_port))
                     s.sendall(pickle.dumps("REQUEST_CHAIN"))
 
-                    # データを分割して受信
                     data = b""
                     while True:
                         packet = s.recv(4096)
@@ -71,24 +70,28 @@ class Node:
                             break
                         data += packet
 
-                    # 受信したデータをデコード
                     if data:
                         try:
                             peer_chain = pickle.loads(data)
+                            # チェーン全体の妥当性を確認
+                            valid_chain = all(
+                                self.blockchain.is_valid_block(peer_chain[i], peer_chain[i - 1])
+                                for i in range(1, len(peer_chain))
+                            )
+                            if valid_chain and len(peer_chain) > max_length:
+                                longest_chain = peer_chain
+                                max_length = len(peer_chain)
+                                print(f"Node {self.node_id} found a suitable chain from {peer_host}:{peer_port}")
                         except pickle.UnpicklingError:
                             print(f"Node {self.node_id} received truncated or invalid pickle data from {peer_host}:{peer_port}")
                             continue
-
-                        if len(peer_chain) > max_length:
-                            longest_chain = peer_chain
-                            max_length = len(peer_chain)
-                            print(f"Node {self.node_id} found a suitable chain from {peer_host}:{peer_port}")
             except ConnectionRefusedError:
                 print(f"Node {self.node_id} could not connect to {peer_host}:{peer_port}")
 
         if longest_chain:
             self.blockchain.chain = longest_chain
             print(f"Node {self.node_id} synchronized to the longest chain with {len(longest_chain)} blocks.")
+
 
     def mine_blocks(self):
         while self.generated_blocks < self.block_limit:
@@ -101,7 +104,12 @@ class Node:
             # 同期してからブロックを生成
             self.request_longest_chain()
 
-            transactions = [generate_transaction() for _ in range(3)]
+            # ノードタイプに応じて正常または不正なトランザクションを生成
+            if self.is_invalid_node:
+                transactions = [{"sender": "InvalidUser", "receiver": "User0", "amount": -50}]
+                print(f"Node {self.node_id} generated an invalid transaction.")
+            else:
+                transactions = [generate_transaction() for _ in range(3)]
             new_block = self.blockchain.add_block(transactions)
 
             if new_block:
